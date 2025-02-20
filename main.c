@@ -79,6 +79,18 @@ sqlite3_stmt *stmt_update_store_stock;
 const char *sql_select_all_tasks_of_an_event = "SELECT * FROM tasks WHERE event_id = ?;";
 sqlite3_stmt *stmt_select_all_tasks_of_an_event;
 
+const char *sql_update_event_completion = "UPDATE events SET is_active = 0 WHERE event_id = ?;";
+sqlite3_stmt *stmt_update_event_completion;
+
+const char *sql_daily_missions = "SELECT * FROM events WHERE event_id = 1;";
+sqlite3_stmt *stmt_daily_missions;
+
+const char *sql_reinitialize_daily_missions_event = "UPDATE events SET start_time = ?, end_time = ?, is_active = 1 WHERE event_id = 1;";
+sqlite3_stmt *stmt_reinitialize_daily_missions_event;
+
+const char *sql_reinitialize_daily_missions_tasks = "UPDATE tasks SET is_completed = 0 WHERE event_id = 1;";
+sqlite3_stmt *stmt_reinitialize_daily_missions_tasks;
+
 void handle_sigint(int sig, siginfo_t *info, void *context) {
     // Access the db pointer passed via the context
     sqlite3 *db = (sqlite3 *)info->si_value.sival_ptr;
@@ -100,6 +112,10 @@ void handle_sigint(int sig, siginfo_t *info, void *context) {
     if (stmt_select_store_items_of_an_event) sqlite3_finalize(stmt_select_store_items_of_an_event);
     if (stmt_update_store_stock) sqlite3_finalize(stmt_update_store_stock);
     if (stmt_select_all_tasks_of_an_event) sqlite3_finalize(stmt_select_all_tasks_of_an_event);
+    if (stmt_update_event_completion) sqlite3_finalize(stmt_update_event_completion);
+    if (stmt_daily_missions) sqlite3_finalize(stmt_daily_missions);
+    if (stmt_reinitialize_daily_missions_event) sqlite3_finalize(stmt_reinitialize_daily_missions_event);
+    if (stmt_reinitialize_daily_missions_tasks) sqlite3_finalize(stmt_reinitialize_daily_missions_tasks);
 
     if (db) {
         int rc = sqlite3_close(db);
@@ -124,7 +140,9 @@ void flush_input_buffer() {
 int file_exists(const char *filename);
 void create_tables(sqlite3 *db);
 int prepare_statements(sqlite3 *db);
+void initialize_daily_missions(sqlite3 *db);
 void display_menu();
+void handle_inactive_or_complete_events(sqlite3 *db);
 void add_event(sqlite3 *db);
 void mark_task_done(sqlite3 *db);
 void buy_item(sqlite3 *db);
@@ -175,8 +193,11 @@ int main() {
     value.sival_ptr = db;
     sigaction(SIGINT, &sa, NULL);
 
+    initialize_daily_missions(db);
+
     int choice;
     do {
+        handle_inactive_or_complete_events(db);
         display_menu();
         scanf("%d", &choice);
         flush_input_buffer(); 
@@ -219,6 +240,10 @@ int main() {
     sqlite3_finalize(stmt_select_store_items_of_an_event);
     sqlite3_finalize(stmt_update_store_stock);
     sqlite3_finalize(stmt_select_all_tasks_of_an_event);
+    sqlite3_finalize(stmt_update_event_completion);
+    sqlite3_finalize(stmt_daily_missions);
+    sqlite3_finalize(stmt_reinitialize_daily_missions_event);
+    sqlite3_finalize(stmt_reinitialize_daily_missions_tasks);
 
     sqlite3_close(db);
     return 0;
@@ -439,6 +464,83 @@ int prepare_statements(sqlite3 *db) {
         return rc;
     }
 
+    rc = sqlite3_prepare_v2(db, sql_update_event_completion, -1, &stmt_update_event_completion, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt_insert_currency);
+        sqlite3_finalize(stmt_insert_events);
+        sqlite3_finalize(stmt_insert_tasks);
+        sqlite3_finalize(stmt_insert_store);
+        sqlite3_finalize(stmt_select_currency);
+        sqlite3_finalize(stmt_select_active_events);
+        sqlite3_finalize(stmt_select_incomplete_tasks_of_an_event);
+        sqlite3_finalize(stmt_update_task_completion);
+        sqlite3_finalize(stmt_update_balance);
+        sqlite3_finalize(stmt_select_store_items_of_an_event);
+        sqlite3_finalize(stmt_update_store_stock);
+        sqlite3_finalize(stmt_select_all_tasks_of_an_event);
+        return rc;
+    }
+
+    rc = sqlite3_prepare_v2(db, sql_daily_missions, -1, &stmt_daily_missions, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt_insert_currency);
+        sqlite3_finalize(stmt_insert_events);
+        sqlite3_finalize(stmt_insert_tasks);
+        sqlite3_finalize(stmt_insert_store);
+        sqlite3_finalize(stmt_select_currency);
+        sqlite3_finalize(stmt_select_active_events);
+        sqlite3_finalize(stmt_select_incomplete_tasks_of_an_event);
+        sqlite3_finalize(stmt_update_task_completion);
+        sqlite3_finalize(stmt_update_balance);
+        sqlite3_finalize(stmt_select_store_items_of_an_event);
+        sqlite3_finalize(stmt_update_store_stock);
+        sqlite3_finalize(stmt_select_all_tasks_of_an_event);
+        sqlite3_finalize(stmt_update_event_completion);
+        return rc;
+    }
+
+    rc = sqlite3_prepare_v2(db, sql_reinitialize_daily_missions_event, -1, &stmt_reinitialize_daily_missions_event, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt_insert_currency);
+        sqlite3_finalize(stmt_insert_events);
+        sqlite3_finalize(stmt_insert_tasks);
+        sqlite3_finalize(stmt_insert_store);
+        sqlite3_finalize(stmt_select_currency);
+        sqlite3_finalize(stmt_select_active_events);
+        sqlite3_finalize(stmt_select_incomplete_tasks_of_an_event);
+        sqlite3_finalize(stmt_update_task_completion);
+        sqlite3_finalize(stmt_update_balance);
+        sqlite3_finalize(stmt_select_store_items_of_an_event);
+        sqlite3_finalize(stmt_update_store_stock);
+        sqlite3_finalize(stmt_select_all_tasks_of_an_event);
+        sqlite3_finalize(stmt_update_event_completion);
+        sqlite3_finalize(stmt_daily_missions);
+        return rc;
+    }
+
+    rc = sqlite3_prepare_v2(db, sql_reinitialize_daily_missions_tasks, -1, &stmt_reinitialize_daily_missions_tasks, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt_insert_currency);
+        sqlite3_finalize(stmt_insert_events);
+        sqlite3_finalize(stmt_insert_tasks);
+        sqlite3_finalize(stmt_insert_store);
+        sqlite3_finalize(stmt_select_currency);
+        sqlite3_finalize(stmt_select_active_events);
+        sqlite3_finalize(stmt_select_incomplete_tasks_of_an_event);
+        sqlite3_finalize(stmt_update_task_completion);
+        sqlite3_finalize(stmt_update_balance);
+        sqlite3_finalize(stmt_select_store_items_of_an_event);
+        sqlite3_finalize(stmt_update_store_stock);
+        sqlite3_finalize(stmt_select_all_tasks_of_an_event);
+        sqlite3_finalize(stmt_update_event_completion);
+        sqlite3_finalize(stmt_daily_missions);
+        sqlite3_finalize(stmt_reinitialize_daily_missions_event);
+        return rc;
+    }
 
     printf("All statements prepared successfully.\n");
     return SQLITE_OK;
@@ -515,6 +617,145 @@ void print_table_row(int num_columns, ...) {
     printf("\n");
 
     va_end(args);
+}
+
+
+void initialize_daily_missions(sqlite3 *db) {
+    if (sqlite3_step(stmt_daily_missions) != SQLITE_ROW) {
+        printf("Daily Missions data does not exist.\n");
+        int rc;
+
+        struct currency new_currency;
+        strncpy(new_currency.currency_name, "Universal Coin", 49);
+        strncpy(new_currency.symbol, "UC", 9);
+        new_currency.balance = 0;
+
+        sqlite3_bind_text(stmt_insert_currency, 1, new_currency.currency_name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt_insert_currency, 2, new_currency.symbol, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt_insert_currency, 3, new_currency.balance);
+
+        rc = sqlite3_step(stmt_insert_currency);
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "Failed to insert currency: %s\n", sqlite3_errmsg(db));
+            sqlite3_reset(stmt_insert_currency);
+            return;
+        }
+
+        sqlite3_reset(stmt_insert_currency);
+        printf("Created Universal Coin(UC).\n");
+
+        struct event new_event;
+        new_event.event_id = 1;
+        strncpy(new_event.event_name, "Daily Missions", 99);
+        new_event.currency_id = 1;
+        new_event.is_time_limited = 1;
+        new_event.start_time = time(NULL);
+        new_event.end_time = new_event.start_time + 24 * 3600;
+        new_event.is_active = 1;
+
+        sqlite3_bind_text(stmt_insert_events, 1, new_event.event_name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt_insert_events, 2, new_event.currency_id);
+        sqlite3_bind_int(stmt_insert_events, 3, new_event.is_time_limited);
+        sqlite3_bind_int64(stmt_insert_events, 4, new_event.start_time);
+        sqlite3_bind_int64(stmt_insert_events, 5, new_event.end_time);
+        sqlite3_bind_int(stmt_insert_events, 6, 1);
+
+        rc = sqlite3_step(stmt_insert_events);
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "Error adding event: %s\n", sqlite3_errmsg(db));
+            sqlite3_reset(stmt_insert_events);
+            return;
+        }
+
+        sqlite3_reset(stmt_insert_events);
+        printf("Daily Missions Event added successfully\n");
+
+        printf("Enter the number of tasks for Event %s: ", new_event.event_name);
+        int num_tasks;
+        scanf("%d", &num_tasks);
+        flush_input_buffer();
+
+        for (int i = 1; i <= num_tasks; ++i) {
+            struct task new_task;
+
+            new_task.event_id = new_event.event_id;
+            new_task.task_id = i;
+
+            printf("Enter task description: ");
+            fgets(new_task.task_description, sizeof(new_task.task_description), stdin);
+            new_task.task_description[strcspn(new_task.task_description, "\n")] = 0;
+
+            printf("Enter the currency amount rewarded upon completion: ");
+            scanf("%d", &new_task.currency_amount);
+            flush_input_buffer();
+
+            new_task.is_completed = 0;
+
+            sqlite3_bind_int(stmt_insert_tasks, 1, new_task.event_id);
+            sqlite3_bind_int(stmt_insert_tasks, 2, new_task.task_id);
+            sqlite3_bind_text(stmt_insert_tasks, 3, new_task.task_description, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt_insert_tasks, 4, new_task.currency_amount);
+            sqlite3_bind_int(stmt_insert_tasks, 5, new_task.is_completed);
+
+            rc = sqlite3_step(stmt_insert_tasks);
+            if (rc != SQLITE_DONE) {
+                fprintf(stderr, "Error adding task: %s\n", sqlite3_errmsg(db));
+                sqlite3_reset(stmt_insert_tasks);
+                return;
+            }
+
+            sqlite3_reset(stmt_insert_tasks);
+            printf("Task %d added successfully\n", i);
+        }
+
+        printf("Enter the number of store items associated with this event: ");
+        int num_items;
+        scanf("%d", &num_items);
+        flush_input_buffer();
+
+        for (int i = 1; i <= num_items; ++i) {
+            struct store_item new_store_item;
+
+            new_store_item.item_id = i;
+
+            printf("Enter item description: ");
+            fgets(new_store_item.item_description, sizeof(new_store_item.item_description), stdin);
+            new_store_item.item_description[strcspn(new_store_item.item_description, "\n")] = 0;
+
+            printf("Enter cost of the item: ");
+            scanf("%d", &new_store_item.cost);
+            flush_input_buffer();
+
+            new_store_item.event_id = new_event.event_id;
+
+            printf("Enter item stock(-1 for infinity): ");
+            scanf("%d", &new_store_item.stock);
+            flush_input_buffer();
+
+            printf("Enter category: ");
+            fgets(new_store_item.category, sizeof(new_store_item.category), stdin);
+            new_store_item.category[strcspn(new_store_item.category, "\n")] = 0;
+
+            sqlite3_bind_int(stmt_insert_store, 1, new_store_item.item_id);
+            sqlite3_bind_text(stmt_insert_store, 2, new_store_item.item_description, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt_insert_store, 3, new_store_item.cost);
+            sqlite3_bind_int(stmt_insert_store, 4, new_store_item.event_id);
+            sqlite3_bind_int(stmt_insert_store, 5, new_store_item.stock);
+            sqlite3_bind_text(stmt_insert_store, 6, new_store_item.category, -1, SQLITE_TRANSIENT);
+
+            rc = sqlite3_step(stmt_insert_store);
+            if (rc != SQLITE_DONE) {
+                fprintf(stderr, "Error adding item: %s\n", sqlite3_errmsg(db));
+                sqlite3_reset(stmt_insert_store);
+                return;
+            }
+
+            sqlite3_reset(stmt_insert_store);
+            printf("Item %d added successfully\n", i);
+        }
+
+        sqlite3_reset(stmt_daily_missions);
+    }
 }
 
 int create_new_currency(sqlite3 *db) {
@@ -1143,7 +1384,7 @@ void buy_item(sqlite3 *db) {
     struct event *events = get_active_events(db, &event_count);
 
     int e_id_width = 10;
-    int e_name_width = 20;
+    int e_name_width = 30;
     int time_width = 30;
     int c_name_width = 30;
     int bal_width = 20;
@@ -1160,11 +1401,12 @@ void buy_item(sqlite3 *db) {
         char end_time_str[21] = "N/A";
 
         if (events[i].start_time != -1 && events[i].end_time != -1) {
-            struct tm *start_tm = localtime(&events[i].start_time);
-            struct tm *end_tm = localtime(&events[i].end_time);
+            struct tm start_tm, end_tm; // Declare separate struct instances
+            localtime_r(&events[i].start_time, &start_tm);
+            localtime_r(&events[i].end_time, &end_tm);
 
-            strftime(start_time_str, sizeof(start_time_str), "%Y-%m-%d %H:%M:%S", start_tm);
-            strftime(end_time_str, sizeof(end_time_str), "%Y-%m-%d %H:%M:%S", end_tm);
+            strftime(start_time_str, sizeof(start_time_str), "%Y-%m-%d %H:%M:%S", &start_tm);
+            strftime(end_time_str, sizeof(end_time_str), "%Y-%m-%d %H:%M:%S", &end_tm);
         }
 
         for (int j = 0; j < currency_count; ++j) {
@@ -1398,7 +1640,7 @@ void list_events_and_tasks(sqlite3 *db) {
         }
 
         int task_count;
-        struct task *tasks = get_all_tasks_of_an_event(db, &task_count, events[0].event_id);
+        struct task *tasks = get_all_tasks_of_an_event(db, &task_count, events[i].event_id);
 
         char e_id_str[10];
         snprintf(e_id_str, sizeof(e_id_str), "%d", events[i].event_id);
@@ -1407,11 +1649,12 @@ void list_events_and_tasks(sqlite3 *db) {
         char end_time_str[21] = "N/A";
 
         if (events[i].start_time != -1 && events[i].end_time != -1) {
-            struct tm *start_tm = localtime(&events[i].start_time);
-            struct tm *end_tm = localtime(&events[i].end_time);
+            struct tm start_tm, end_tm; // Declare separate struct instances
+            localtime_r(&events[i].start_time, &start_tm);
+            localtime_r(&events[i].end_time, &end_tm);
 
-            strftime(start_time_str, sizeof(start_time_str), "%Y-%m-%d %H:%M:%S", start_tm);
-            strftime(end_time_str, sizeof(end_time_str), "%Y-%m-%d %H:%M:%S", end_tm);
+            strftime(start_time_str, sizeof(start_time_str), "%Y-%m-%d %H:%M:%S", &start_tm);
+            strftime(end_time_str, sizeof(end_time_str), "%Y-%m-%d %H:%M:%S", &end_tm);
         }
 
         print_table_row(4, e_id_str, id_width, events[i].event_name, name_desc_width, start_time_str, time_width, end_time_str, time_width);
@@ -1447,4 +1690,71 @@ void list_stats(sqlite3 *db) {
     print_currency_table(currencies, currency_count);
 
     free(currencies);
+}
+
+void handle_inactive_or_complete_events(sqlite3 *db) {
+    int event_count;
+    struct event *events = get_active_events(db, &event_count);
+    int rc;
+
+    for (int i = 0; i < event_count; ++i) {
+        if (events[i].is_time_limited) {
+            time_t current_time = time(NULL);
+            if (current_time > events[i].end_time) {
+                sqlite3_bind_int(stmt_update_event_completion, 1, events[i].event_id);
+
+                rc = sqlite3_step(stmt_update_event_completion);
+                if (rc != SQLITE_DONE) {
+                    fprintf(stderr, "Error marking event %d as inactive: %s\n", events[i].event_id, sqlite3_errmsg(db));
+                    sqlite3_reset(stmt_update_event_completion); 
+                    return;
+                }
+
+                sqlite3_reset(stmt_update_event_completion);
+                printf("Event %s has ended.\n", events[i].event_name);
+
+                if (events[i].event_id == 1) {
+                    time_t new_start = events[i].end_time;
+                    time_t new_end = new_start + 24 * 3600;
+
+                    sqlite3_bind_int64(stmt_reinitialize_daily_missions_event, 1, new_start);
+                    sqlite3_bind_int64(stmt_reinitialize_daily_missions_event, 2, new_end);
+
+                    rc = sqlite3_step(stmt_reinitialize_daily_missions_event);
+                    if (rc != SQLITE_DONE) {
+                        fprintf(stderr, "Error reinitializing event %d as active: %s\n", events[i].event_id, sqlite3_errmsg(db));
+                        sqlite3_reset(stmt_reinitialize_daily_missions_event); 
+                        return;
+                    }
+
+                    sqlite3_reset(stmt_reinitialize_daily_missions_event);
+                    sqlite3_exec(db, sql_reinitialize_daily_missions_tasks, NULL, NULL, NULL);
+                }
+
+                continue;
+            }
+        }
+
+
+        int task_count;
+        struct task *tasks = get_incomplete_tasks_of_an_event(db, &task_count, events[i].event_id);
+
+        if (task_count == 0) {
+            sqlite3_bind_int(stmt_update_event_completion, 1, events[i].event_id);
+
+            int rc = sqlite3_step(stmt_update_event_completion);
+            if (rc != SQLITE_DONE) {
+                fprintf(stderr, "Error marking event %d as inactive: %s\n", events[i].event_id, sqlite3_errmsg(db));
+                sqlite3_reset(stmt_update_event_completion); 
+                return;
+            }
+
+            sqlite3_reset(stmt_update_event_completion);
+            printf("Event %s has been completed.\n", events[i].event_name);
+        }
+
+        free(tasks);
+    }
+
+    free(events);
 }
