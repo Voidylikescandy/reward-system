@@ -1715,7 +1715,12 @@ void handle_inactive_or_complete_events(sqlite3 *db) {
 
                 if (events[i].event_id == 1) {
                     time_t new_start = events[i].end_time;
-                    time_t new_end = new_start + 24 * 3600;
+                    time_t interval = 24 * 3600;
+                    time_t new_end = new_start + interval;
+                    if (current_time > new_end) {
+                        time_t elapsed = current_time - new_start;
+                        new_end = new_start + ((elapsed / interval) + 1) * interval;
+                    }
 
                     sqlite3_bind_int64(stmt_reinitialize_daily_missions_event, 1, new_start);
                     sqlite3_bind_int64(stmt_reinitialize_daily_missions_event, 2, new_end);
